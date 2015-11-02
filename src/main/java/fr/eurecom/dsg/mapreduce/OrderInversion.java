@@ -17,19 +17,20 @@ import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
+import java.io.IOException;
+import java.util.Iterator;
+
 
 public class OrderInversion extends Configured implements Tool {
 
   private final static String ASTERISK = "\0";
 
-  public static class PartitionerTextPair extends
-  Partitioner<TextPair, IntWritable> {
+  public static class PartitionerTextPair extends Partitioner<TextPair, IntWritable> {
     @Override
-    public int getPartition(TextPair key, IntWritable value,
-        int numPartitions) {
+    public int getPartition(TextPair key, IntWritable value, int numPartitions) {
       // TODO: implement getPartition such that pairs with the same first element
       //       will go to the same reducer. You can use toUnsighed as utility.
-      return 0;
+      return key.getFirst().hashCode()%numPartitions; // send the TextPair with the same left word to the same reducer
     }
     
     /**
@@ -47,10 +48,49 @@ public class OrderInversion extends Configured implements Tool {
   public static class PairMapper extends
   Mapper<LongWritable, Text, TextPair, IntWritable> {
 
+    private int window = 10; //It should be modified!!!!!
+    private int sum = 0;
+    private static IntWritable ONE = new IntWritable(1);
+    private static TextPair textPair = new TextPair();
+    private static TextPair SpecialTP = new TextPair();
+    private String pattern = "[^a-zA-Z0-9-']";
+
     @Override
     public void map(LongWritable key, Text value, Context context)
     throws java.io.IOException, InterruptedException {
-
+      String line = value.toString();
+      line = line.replaceAll(pattern, " ");
+      String[] words = line.split("\\s+"); //split string to tokens
+      for(int i = 0; i < words.length; i++) {
+        for(int j = 0; j < words.length; j++) {
+          sum = 0;
+          if(i == j)
+            continue;
+          else if (words[j].length() == 0)
+            continue;
+          else{
+            textPair.set(new Text(words[i]), new Text(words[j]));
+            context.write(textPair, ONE);
+            sum++;
+          }
+        }
+      /*  sum = 0;
+        for(int j = i - window; j < i + window + 1; j++) {
+          if(i == j || j < 0)
+            continue;
+          else if(j >= words.length)
+            break;
+          else if (words[j].length() == 0) //skip empty tokens
+            break;
+          else{
+            textPair.set(new Text(words[i]), new Text(words[j]));
+            context.write(textPair, ONE);
+            sum++;
+          }
+        }*/
+        SpecialTP.set(new Text(words[i]), new Text("*"));
+        context.write(SpecialTP, new IntWritable(sum));
+      }
       // TODO: implement the map method
     }
   }
@@ -58,6 +98,29 @@ public class OrderInversion extends Configured implements Tool {
   public static class PairReducer extends
   Reducer<TextPair, IntWritable, TextPair, DoubleWritable> {
 
+    private static DoubleWritable SumValue = new DoubleWritable(0);
+    private static Text Current = new Text("NOT_SET");
+    private int total = 0;
+
+    @Override
+    public void reduce(TextPair key, Iterable<IntWritable> values, Context context)
+            throws IOException, InterruptedException {
+      Iterator<IntWritable> iter = values.iterator();
+      if (!key.getFirst().equals(Current)) {
+        SumValue = new DoubleWritable(0);
+        Current = new Text(key.getFirst());
+        total = 0;
+      } // When TextPair's left word changes
+      int count = 0;
+      while (iter.hasNext()) {
+        if(key.getSecond().toString().equals('*'))
+          total += iter.next().get();
+        else
+          count += iter.next().get();
+      }
+      SumValue.set(count/total);
+      context.write(key, SumValue);
+    }
     // TODO: implement the reduce method
   }
 
@@ -67,19 +130,27 @@ public class OrderInversion extends Configured implements Tool {
 
   @Override
   public int run(String[] args) throws Exception {
-    Configuration conf = this.getConf();
 
-    Job job = null;  // TODO: define new job instead of null using conf e setting a name
-    
-    // TODO: set job input format
-    // TODO: set map class and the map output key and value classes
-    // TODO: set reduce class and the reduce output key and value classes
-    // TODO: set job output format
-    // TODO: add the input file as job input (from HDFS) to the variable inputFile
-    // TODO: set the output path for the job results (to HDFS) to the variable outputPath
-    // TODO: set the number of reducers using variable numberReducers
-    // TODO: set the jar class
-    
+    Configuration conf = this.getConf();
+    Job job = new Job(conf, "OrderInversion");
+
+
+    job.setInputFormatClass(TextInputFormat.class);
+    job.setMapperClass(PairMapper.class);
+    job.setMapOutputKeyClass(TextPair.class);
+    job.setMapOutputValueClass(IntWritable.class);
+
+    job.setReducerClass(PairReducer.class);
+    job.setOutputKeyClass(TextPair.class);
+    job.setOutputValueClass(IntWritable.class); //how to build the matrix ???
+
+    job.setOutputFormatClass(TextOutputFormat.class);
+
+    org.apache.hadoop.mapreduce.lib.input.FileInputFormat.addInputPath(job, new Path(args[1])); //Why?? from different lib
+    FileOutputFormat.setOutputPath(job, new Path(args[2]));
+    job.setNumReduceTasks(Integer.parseInt(args[0]));
+
+    job.setJarByClass(OrderInversion.class);
     return job.waitForCompletion(true) ? 0 : 1;
   }
 
