@@ -48,22 +48,23 @@ public class OrderInversion extends Configured implements Tool {
   public static class PairMapper extends
   Mapper<LongWritable, Text, TextPair, IntWritable> {
 
-    private int window = 10; //It should be modified!!!!!
+    private int window = 2; //It should be modified!!!!!
     private int sum = 0;
     private static IntWritable ONE = new IntWritable(1);
     private static TextPair textPair = new TextPair();
     private static TextPair SpecialTP = new TextPair();
-    private String pattern = "[^a-zA-Z0-9-']";
+    private String pattern = "[^a-zA-Z0-9]";
 
     @Override
     public void map(LongWritable key, Text value, Context context)
     throws java.io.IOException, InterruptedException {
+      window = context.getConfiguration().getInt("window", 2);
       String line = value.toString();
       line = line.replaceAll(pattern, " ");
       String[] words = line.split("\\s+"); //split string to tokens
       for(int i = 0; i < words.length; i++) {
+        /*
         for(int j = 0; j < words.length; j++) {
-          sum = 0;
           if(i == j)
             continue;
           else if (words[j].length() == 0)
@@ -71,10 +72,10 @@ public class OrderInversion extends Configured implements Tool {
           else{
             textPair.set(new Text(words[i]), new Text(words[j]));
             context.write(textPair, ONE);
-            sum++;
+            sum += 1;
           }
-        }
-      /*  sum = 0;
+        }*/
+
         for(int j = i - window; j < i + window + 1; j++) {
           if(i == j || j < 0)
             continue;
@@ -87,11 +88,10 @@ public class OrderInversion extends Configured implements Tool {
             context.write(textPair, ONE);
             sum++;
           }
-        }*/
+        }
         SpecialTP.set(new Text(words[i]), new Text("*"));
         context.write(SpecialTP, new IntWritable(sum));
       }
-      // TODO: implement the map method
     }
   }
 
@@ -105,20 +105,27 @@ public class OrderInversion extends Configured implements Tool {
     @Override
     public void reduce(TextPair key, Iterable<IntWritable> values, Context context)
             throws IOException, InterruptedException {
+
       Iterator<IntWritable> iter = values.iterator();
+
       if (!key.getFirst().equals(Current)) {
-        SumValue = new DoubleWritable(0);
         Current = new Text(key.getFirst());
         total = 0;
       } // When TextPair's left word changes
       int count = 0;
       while (iter.hasNext()) {
-        if(key.getSecond().toString().equals('*'))
+        if(key.getSecond().toString().equals("*"))
           total += iter.next().get();
         else
           count += iter.next().get();
       }
-      SumValue.set(count/total);
+      if (count != 0) {
+        double divide = (double)count / total;
+        SumValue.set(divide);
+      }
+      else if(key.getSecond().toString().equals("*"))
+        SumValue.set(total);
+
       context.write(key, SumValue);
     }
     // TODO: implement the reduce method
